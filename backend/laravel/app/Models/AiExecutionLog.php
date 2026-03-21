@@ -13,26 +13,22 @@ class AiExecutionLog extends Model
         'model',
         'prompt_version',
         'execution_type',
-        'retry_count',
         'request_payload',
         'response_payload',
         'raw_response',
-        'status',
-        'error_message',
         'latency_ms',
         'prompt_tokens',
         'completion_tokens',
         'total_tokens',
-        'cost_usd',
+        'status',
+        'error_message',
         'executed_at',
     ];
 
     protected $casts = [
         'request_payload' => 'array',
         'response_payload' => 'array',
-        'raw_response' => 'array',
         'executed_at' => 'datetime',
-        'cost_usd' => 'decimal:6',
     ];
 
     public function taskGenerationRequest(): BelongsTo

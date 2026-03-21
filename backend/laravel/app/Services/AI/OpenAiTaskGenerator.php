@@ -1,248 +1,190 @@
 <?php
 
-namespace App\Services\AI;
+namespace App\Services\Ai;
 
-use App\Exceptions\OpenAiGenerationException;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
-use Throwable;
+use Illuminate\Support\Arr;
+use RuntimeException;
 
 class OpenAiTaskGenerator
 {
     public function generate(array $input): array
     {
-        $apiKey = config('services.openai.api_key');
         $model = config('services.openai.model');
+        $apiKey = config('services.openai.api_key');
+        $baseUrl = rtrim(config('services.openai.base_url'), '/');
         $timeout = config('services.openai.timeout', 120);
-        $maxOutputTokens = config('services.openai.max_output_tokens', 2000);
-        $apiUrl = config('services.openai.api_url');
 
-        if (blank($apiKey)) {
-            throw new OpenAiGenerationException('OPENAI_API_KEY is not configured.');
-        }
-
-        $systemPrompt = $this->buildSystemPrompt();
-        $userPrompt = $this->buildUserPrompt($input);
-        $schema = $this->taskJsonSchema();
-
-        $payload = [
-            'model' => $model,
-            'messages' => [
-                [
-                    'role' => 'system',
-                    'content' => $systemPrompt,
-                ],
-                [
-                    'role' => 'user',
-                    'content' => $userPrompt,
-                ],
-            ],
-            'response_format' => [
-                'type' => 'json_schema',
-                'json_schema' => [
-                    'name' => 'generated_tasks_response',
-                    'strict' => true,
-                    'schema' => $schema,
-                ],
-            ],
-            'max_completion_tokens' => $maxOutputTokens,
-        ];
-
-        $started = microtime(true);
-
-        try {
-            $response = Http::timeout($timeout)
-                ->withToken($apiKey)
-                ->acceptJson()
-                ->asJson()
-                ->post($apiUrl, $payload);
-        } catch (ConnectionException $e) {
-            throw new OpenAiGenerationException('Failed to connect to OpenAI API: ' . $e->getMessage(), 0, $e);
-        } catch (Throwable $e) {
-            throw new OpenAiGenerationException('Unexpected OpenAI request error: ' . $e->getMessage(), 0, $e);
-        }
-
-        $latencyMs = (int) round((microtime(true) - $started) * 1000);
-        $rawResponse = $response->json();
-
-        if (! $response->successful()) {
-            throw new OpenAiGenerationException(
-                'OpenAI API error: HTTP ' . $response->status() . ' / ' . json_encode($rawResponse, JSON_UNESCAPED_UNICODE)
-            );
-        }
-
-        $content = data_get($rawResponse, 'choices.0.message.content');
-
-        if (! is_string($content) || trim($content) === '') {
-            throw new OpenAiGenerationException(
-                'OpenAI response does not contain choices.0.message.content.'
-            );
-        }
-
-        $decoded = json_decode($content, true);
-
-        if (! is_array($decoded)) {
-            throw new OpenAiGenerationException(
-                'Failed to decode JSON content from OpenAI response.'
-            );
-        }
-
-        if (! isset($decoded['tasks']) || ! is_array($decoded['tasks'])) {
-            throw new OpenAiGenerationException(
-                'OpenAI response JSON does not contain a valid tasks array.'
-            );
-        }
-
-        $normalizedTasks = $this->normalizeTasks($decoded['tasks']);
-
-        return [
-            'result' => [
-                'tasks' => $normalizedTasks,
-            ],
-            'meta' => [
-                'provider' => 'openai',
-                'model' => $model,
-                'prompt_version' => 1,
-                'request_payload' => $payload,
-                'raw_response' => $rawResponse,
-                'latency_ms' => $latencyMs,
-                'usage' => [
-                    'prompt_tokens' => data_get($rawResponse, 'usage.prompt_tokens'),
-                    'completion_tokens' => data_get($rawResponse, 'usage.completion_tokens'),
-                    'total_tokens' => data_get($rawResponse, 'usage.total_tokens'),
-                ],
-            ],
-        ];
-    }
-
-    private function buildSystemPrompt(): string
-    {
-        return <<<'PROMPT'
-You are an expert task planning assistant.
-
-Your job is to generate a realistic and actionable task plan for a member based on:
-- goal
-- available_hours
-- previous_score
-- note
-
-Rules:
-- Output must strictly follow the provided JSON schema.
-- Return only valid JSON.
-- Create a practical sequence of tasks.
-- Keep titles concise and specific.
-- Descriptions should be useful and implementation-oriented.
-- estimated_hours must be realistic.
-- sequence_no must start from 1 and increase sequentially.
-- task_category should be one of: learning, execution, review, communication, planning, analysis
-- priority should be one of: low, medium, high
-- difficulty should be one of: easy, medium, hard
-- ai_reason should explain why the task is included.
-- Total estimated hours should generally fit within available_hours, but slight overage is acceptable if justified.
-PROMPT;
-    }
-
-    private function buildUserPrompt(array $input): string
-    {
-        return json_encode([
-            'goal' => $input['goal'] ?? '',
-            'available_hours' => $input['available_hours'] ?? null,
-            'previous_score' => $input['previous_score'] ?? null,
-            'note' => $input['note'] ?? '',
-        ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-    }
-
-    private function taskJsonSchema(): array
-    {
-        return [
-            'type' => 'object',
-            'additionalProperties' => false,
-            'required' => ['tasks'],
-            'properties' => [
-                'tasks' => [
-                    'type' => 'array',
-                    'minItems' => 1,
-                    'maxItems' => 20,
-                    'items' => [
-                        'type' => 'object',
-                        'additionalProperties' => false,
-                        'required' => [
-                            'title',
-                            'description',
-                            'task_category',
-                            'priority',
-                            'difficulty',
-                            'estimated_hours',
-                            'sequence_no',
-                            'ai_reason',
-                        ],
-                        'properties' => [
-                            'title' => [
-                                'type' => 'string',
-                                'minLength' => 1,
-                                'maxLength' => 120,
+        $schema = [
+            'name' => 'generated_tasks_response',
+            'strict' => true,
+            'schema' => [
+                'type' => 'object',
+                'additionalProperties' => false,
+                'required' => ['tasks'],
+                'properties' => [
+                    'tasks' => [
+                        'type' => 'array',
+                        'items' => [
+                            'type' => 'object',
+                            'additionalProperties' => false,
+                            'required' => [
+                                'title',
+                                'description',
+                                'task_category',
+                                'priority',
+                                'difficulty',
+                                'estimated_hours',
+                                'sequence_no',
+                                'ai_reason',
                             ],
-                            'description' => [
-                                'type' => 'string',
-                                'minLength' => 1,
-                                'maxLength' => 1000,
-                            ],
-                            'task_category' => [
-                                'type' => 'string',
-                                'enum' => ['learning', 'execution', 'review', 'communication', 'planning', 'analysis'],
-                            ],
-                            'priority' => [
-                                'type' => 'string',
-                                'enum' => ['low', 'medium', 'high'],
-                            ],
-                            'difficulty' => [
-                                'type' => 'string',
-                                'enum' => ['easy', 'medium', 'hard'],
-                            ],
-                            'estimated_hours' => [
-                                'type' => 'number',
-                                'minimum' => 0.5,
-                                'maximum' => 100,
-                            ],
-                            'sequence_no' => [
-                                'type' => 'integer',
-                                'minimum' => 1,
-                            ],
-                            'ai_reason' => [
-                                'type' => 'string',
-                                'minLength' => 1,
-                                'maxLength' => 1000,
+                            'properties' => [
+                                'title' => ['type' => 'string'],
+                                'description' => ['type' => 'string'],
+                                'task_category' => [
+                                    'type' => 'string',
+                                    'enum' => ['research', 'planning', 'execution', 'review', 'learning', 'other'],
+                                ],
+                                'priority' => [
+                                    'type' => 'string',
+                                    'enum' => ['low', 'medium', 'high'],
+                                ],
+                                'difficulty' => [
+                                    'type' => 'string',
+                                    'enum' => ['easy', 'medium', 'hard'],
+                                ],
+                                'estimated_hours' => ['type' => 'number'],
+                                'sequence_no' => ['type' => 'integer'],
+                                'ai_reason' => ['type' => 'string'],
                             ],
                         ],
                     ],
                 ],
             ],
         ];
+
+        $systemPrompt = <<<PROMPT
+You are an expert productivity planner.
+Generate practical, realistic action tasks based on the user's goal.
+
+Rules:
+- Return 3 to 5 tasks.
+- Tasks must be concrete and executable.
+- sequence_no must start from 1 and increase without gaps.
+- estimated_hours must be realistic and positive.
+- Respect available_hours if provided.
+- previous_score indicates the user's recent performance level.
+- note may contain constraints or additional context.
+- Output must strictly follow the JSON schema.
+PROMPT;
+
+        $userPayload = [
+            'goal' => $input['goal'] ?? '',
+            'available_hours' => $input['available_hours'] ?? null,
+            'previous_score' => $input['previous_score'] ?? null,
+            'note' => $input['note'] ?? '',
+        ];
+
+        $requestPayload = [
+            'model' => $model,
+            'input' => [
+                [
+                    'role' => 'system',
+                    'content' => [
+                        [
+                            'type' => 'input_text',
+                            'text' => $systemPrompt,
+                        ],
+                    ],
+                ],
+                [
+                    'role' => 'user',
+                    'content' => [
+                        [
+                            'type' => 'input_text',
+                            'text' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT),
+                        ],
+                    ],
+                ],
+            ],
+            'text' => [
+                'format' => [
+                    'type' => 'json_schema',
+                    'name' => $schema['name'],
+                    'strict' => $schema['strict'],
+                    'schema' => $schema['schema'],
+                ],
+            ],
+        ];
+
+        $startedAt = microtime(true);
+
+        $response = Http::timeout($timeout)
+            ->acceptJson()
+            ->withToken($apiKey)
+            ->post($baseUrl . '/responses', $requestPayload);
+
+        $latencyMs = (int) round((microtime(true) - $startedAt) * 1000);
+
+        $responsePayload = $response->json();
+        $rawResponse = $response->body();
+
+        if ($response->failed()) {
+            throw new RuntimeException(
+                'OpenAI API request failed: ' . ($responsePayload['error']['message'] ?? $response->body())
+            );
+        }
+
+        $structuredText = $this->extractStructuredJsonText($responsePayload);
+
+        if (!$structuredText) {
+            throw new RuntimeException('Structured output text was empty.');
+        }
+
+        $decoded = json_decode($structuredText, true);
+
+        if (!is_array($decoded)) {
+            throw new RuntimeException('Structured output JSON decode failed.');
+        }
+
+        return [
+            'tasks' => $decoded['tasks'] ?? [],
+            'meta' => [
+                'provider' => 'openai',
+                'model' => $responsePayload['model'] ?? $model,
+                'prompt_version' => 'v1',
+                'execution_type' => 'task_generation',
+                'request_payload' => $requestPayload,
+                'response_payload' => $responsePayload,
+                'raw_response' => $rawResponse,
+                'latency_ms' => $latencyMs,
+                'prompt_tokens' => Arr::get($responsePayload, 'usage.input_tokens'),
+                'completion_tokens' => Arr::get($responsePayload, 'usage.output_tokens'),
+                'total_tokens' => Arr::get($responsePayload, 'usage.total_tokens'),
+                'status' => 'success',
+                'error_message' => null,
+                'executed_at' => now(),
+            ],
+        ];
     }
 
-    private function normalizeTasks(array $tasks): array
+    private function extractStructuredJsonText(array $responsePayload): ?string
     {
-        $normalized = [];
-
-        foreach ($tasks as $index => $task) {
-            $normalized[] = [
-                'title' => (string) ($task['title'] ?? ''),
-                'description' => (string) ($task['description'] ?? ''),
-                'task_category' => (string) ($task['task_category'] ?? 'planning'),
-                'priority' => (string) ($task['priority'] ?? 'medium'),
-                'difficulty' => (string) ($task['difficulty'] ?? 'medium'),
-                'estimated_hours' => (float) ($task['estimated_hours'] ?? 1),
-                'sequence_no' => (int) ($task['sequence_no'] ?? ($index + 1)),
-                'ai_reason' => (string) ($task['ai_reason'] ?? ''),
-            ];
+        if (!empty($responsePayload['output_text']) && is_string($responsePayload['output_text'])) {
+            return $responsePayload['output_text'];
         }
 
-        usort($normalized, fn ($a, $b) => $a['sequence_no'] <=> $b['sequence_no']);
+        $output = $responsePayload['output'] ?? [];
 
-        foreach ($normalized as $i => &$task) {
-            $task['sequence_no'] = $i + 1;
+        foreach ($output as $item) {
+            $contents = $item['content'] ?? [];
+            foreach ($contents as $content) {
+                if (($content['type'] ?? null) === 'output_text' && isset($content['text'])) {
+                    return $content['text'];
+                }
+            }
         }
 
-        return $normalized;
+        return null;
     }
 }

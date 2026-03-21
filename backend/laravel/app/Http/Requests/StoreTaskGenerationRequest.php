@@ -14,7 +14,6 @@ class StoreTaskGenerationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'member_id' => ['required', 'integer', 'exists:members,id'],
             'goal' => ['required', 'string', 'max:1000'],
             'available_hours' => ['required', 'numeric', 'min:0.5', 'max:200'],
             'previous_score' => ['nullable', 'integer', 'min:0', 'max:100'],

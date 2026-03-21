@@ -17,14 +17,13 @@ class TaskGenerationRequestController extends Controller
         $data = $request->validated();
 
         $taskRequest = TaskGenerationRequest::create([
-            'member_id' => $data['member_id'],
             'goal' => $data['goal'],
             'available_hours' => $data['available_hours'],
             'previous_score' => $data['previous_score'] ?? null,
             'note' => $data['note'] ?? null,
             'status' => 'pending',
             'generation_version' => 1,
-            'input_snapshot' => null,
+            'requested_at' => now(),
         ]);
 
         GenerateTasksJob::dispatch($taskRequest->id);

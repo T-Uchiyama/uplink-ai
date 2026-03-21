@@ -3,7 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\TaskGenerationRequest;
-use App\Services\TaskGenerationService;
+use App\Services\Ai\TaskGenerationService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;

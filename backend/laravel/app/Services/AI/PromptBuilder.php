@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Services\AI;
+namespace App\Services\Ai;
 
 use App\Models\TaskGenerationRequest;
 

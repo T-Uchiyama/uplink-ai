@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class TaskGenerationRequest extends Model
 {
     protected $fillable = [
-        'member_id',
         'goal',
         'available_hours',
         'previous_score',
@@ -16,6 +15,8 @@ class TaskGenerationRequest extends Model
         'status',
         'generation_version',
         'input_snapshot',
+        'requested_at',
+        'completed_at',
     ];
 
     protected $casts = [
