@@ -38,8 +38,9 @@ return [
     'openai' => [
         'api_key' => env('OPENAI_API_KEY'),
         'model' => env('OPENAI_MODEL', 'gpt-4.1-mini'),
-        'timeout' => (int) env('OPENAI_TIMEOUT', 60),
+        'timeout' => (int) env('OPENAI_TIMEOUT', 120),
         'max_output_tokens' => (int) env('OPENAI_MAX_OUTPUT_TOKENS', 2000),
+        'api_url' => env('OPENAI_API_URL', 'https://api.openai.com/v1/chat/completions'),
     ],
 
 ];

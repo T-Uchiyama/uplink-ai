@@ -3,19 +3,21 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Resources\GeneratedTaskResource;
 use App\Models\GeneratedTask;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\Request;
 
 class GeneratedTaskController extends Controller
 {
-    public function index(Request $request)
+    public function index(Request $request): AnonymousResourceCollection
     {
-        $requestId = $request->query('request_id');
+        $query = GeneratedTask::query()->orderBy('sequence_no');
 
-        $tasks = GeneratedTask::where('task_generation_request_id', $requestId)
-            ->orderBy('sequence_no')
-            ->get();
+        if ($request->filled('request_id')) {
+            $query->where('task_generation_request_id', $request->integer('request_id'));
+        }
 
-        return response()->json($tasks);
+        return GeneratedTaskResource::collection($query->get());
     }
 }

@@ -1,12 +1,9 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\TaskGenerationRequestController;
 use App\Http\Controllers\Api\GeneratedTaskController;
+use App\Http\Controllers\Api\TaskGenerationRequestController;
+use Illuminate\Support\Facades\Route;
 
-Route::prefix('task-generation-requests')->group(function () {
-    Route::post('/', [TaskGenerationRequestController::class, 'store']);
-    Route::get('/{id}', [TaskGenerationRequestController::class, 'show']);
-});
-
+Route::post('/task-generation-requests', [TaskGenerationRequestController::class, 'store']);
+Route::get('/task-generation-requests/{taskGenerationRequest}', [TaskGenerationRequestController::class, 'show']);
 Route::get('/generated-tasks', [GeneratedTaskController::class, 'index']);

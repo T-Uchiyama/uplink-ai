@@ -4,12 +4,15 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreTaskGenerationRequest;
-use App\Models\TaskGenerationRequest;
+use App\Http\Resources\TaskGenerationRequestResource;
 use App\Jobs\GenerateTasksJob;
+use App\Models\TaskGenerationRequest;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class TaskGenerationRequestController extends Controller
 {
-    public function store(StoreTaskGenerationRequest $request)
+    public function store(StoreTaskGenerationRequest $request): JsonResponse
     {
         $data = $request->validated();
 
@@ -21,6 +24,7 @@ class TaskGenerationRequestController extends Controller
             'note' => $data['note'] ?? null,
             'status' => 'pending',
             'generation_version' => 1,
+            'input_snapshot' => null,
         ]);
 
         GenerateTasksJob::dispatch($taskRequest->id);
@@ -28,14 +32,17 @@ class TaskGenerationRequestController extends Controller
         return response()->json([
             'id' => $taskRequest->id,
             'status' => $taskRequest->status,
+            'message' => 'Task generation request has been accepted.',
         ], 202);
     }
 
-    public function show($id)
+    public function show(Request $request, TaskGenerationRequest $taskGenerationRequest): TaskGenerationRequestResource
     {
-        $request = TaskGenerationRequest::with('generatedTasks')
-            ->findOrFail($id);
+        $taskGenerationRequest->load([
+            'generatedTasks' => fn ($q) => $q->orderBy('sequence_no'),
+            'aiExecutionLogs' => fn ($q) => $q->latest('executed_at'),
+        ]);
 
-        return response()->json($request);
+        return new TaskGenerationRequestResource($taskGenerationRequest);
     }
 }
