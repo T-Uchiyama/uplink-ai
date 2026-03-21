@@ -27,7 +27,7 @@ class TaskGenerationRequestController extends Controller
 
         return response()->json([
             'id' => $taskRequest->id,
-            'status' => 'accepted'
+            'status' => $taskRequest->status,
         ], 202);
     }
 

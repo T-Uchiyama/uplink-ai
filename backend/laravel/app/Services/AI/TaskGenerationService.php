@@ -6,133 +6,98 @@ use App\Models\AiExecutionLog;
 use App\Models\GeneratedTask;
 use App\Models\TaskGenerationRequest;
 use Illuminate\Support\Facades\DB;
-use Throwable;
+use RuntimeException;
 
 class TaskGenerationService
 {
     public function __construct(
-        private readonly PromptBuilder $promptBuilder
+        private OpenAiTaskGenerator $openAiTaskGenerator
     ) {
     }
 
-    public function generate(TaskGenerationRequest $request): array
+    public function generate(TaskGenerationRequest $request): void
     {
+        $payload = [
+            'goal' => $request->goal,
+            'available_hours' => (float) $request->available_hours,
+            'previous_score' => $request->previous_score,
+            'note' => $request->note,
+        ];
+
         $request->update([
-            'status' => 'processing',
+            'input_snapshot' => $payload,
         ]);
 
-        $prompts = $this->promptBuilder->build($request);
+        $generated = $this->openAiTaskGenerator->generate($payload);
 
-        $log = AiExecutionLog::create([
-            'request_id' => $request->id,
-            'provider' => 'openai',
-            'model' => 'stub-model',
-            'prompt_version' => 'v1',
-            'execution_type' => 'task_generation',
-            'retry_count' => 0,
-            'request_payload' => [
-                'system_prompt' => $prompts['system'],
-                'user_prompt' => $prompts['user'],
-            ],
-            'status' => 'processing',
-            'executed_at' => now(),
-        ]);
+        $result = $generated['result'] ?? null;
+        $meta = $generated['meta'] ?? null;
+        $tasks = $result['tasks'] ?? null;
 
-        try {
-            $response = $this->fakeAiResponse($request);
+        if (!is_array($tasks) || count($tasks) === 0) {
+            throw new RuntimeException('No tasks were generated.');
+        }
 
-            DB::transaction(function () use ($request, $response, $log) {
-                $generationVersion = $this->resolveNextGenerationVersion($request);
+        DB::transaction(function () use ($request, $tasks, $meta): void {
+            $nextVersion = $this->resolveNextGenerationVersion($request);
 
-                foreach ($response['tasks'] as $task) {
-                    GeneratedTask::create([
-                        'task_generation_request_id' => $request->id,
-                        'member_id' => $request->member_id,
-                        'generation_version' => $generationVersion,
-                        'title' => $task['title'],
-                        'description' => $task['description'] ?? null,
-                        'task_category' => $task['task_category'] ?? null,
-                        'priority' => $task['priority'] ?? null,
-                        'difficulty' => $task['difficulty'] ?? null,
-                        'estimated_hours' => $task['estimated_hours'] ?? null,
-                        'status' => 'pending',
-                        'sequence_no' => $task['sequence_no'],
-                        'ai_reason' => $task['ai_reason'] ?? null,
-                    ]);
-                }
-
-                $log->update([
-                    'response_payload' => $response,
-                    'status' => 'success',
+            foreach ($tasks as $index => $task) {
+                GeneratedTask::create([
+                    'task_generation_request_id' => $request->id,
+                    'member_id' => $request->member_id,
+                    'generation_version' => $nextVersion,
+                    'title' => $task['title'],
+                    'description' => $task['description'],
+                    'task_category' => $task['task_category'],
+                    'priority' => $task['priority'],
+                    'difficulty' => $task['difficulty'],
+                    'estimated_hours' => $task['estimated_hours'],
+                    'status' => 'pending',
+                    'sequence_no' => $task['sequence_no'] ?? ($index + 1),
+                    'ai_reason' => $task['ai_reason'],
                 ]);
+            }
 
-                $request->update([
-                    'status' => 'completed',
-                    'completed_at' => now(),
-                ]);
-            });
-
-            return $response;
-        } catch (Throwable $e) {
-            $log->update([
-                'status' => 'failed',
-                'error_message' => $e->getMessage(),
-            ]);
+            $this->storeAiExecutionLog($request, is_array($meta) ? $meta : []);
 
             $request->update([
-                'status' => 'failed',
+                'status' => 'completed',
+                'completed_at' => now(),
             ]);
-
-            throw $e;
-        }
+        });
     }
 
     private function resolveNextGenerationVersion(TaskGenerationRequest $request): int
     {
         $maxVersion = GeneratedTask::query()
-            ->where('task_generation_request_id', $request->id)
+            ->where('member_id', $request->member_id)
             ->max('generation_version');
 
-        return $maxVersion ? $maxVersion + 1 : 1;
+        $nextVersion = ((int) $maxVersion) + 1;
+
+        return $nextVersion > 0 ? $nextVersion : 1;
     }
 
-    private function fakeAiResponse(TaskGenerationRequest $request): array
+    private function storeAiExecutionLog(TaskGenerationRequest $request, array $meta): void
     {
-        $goal = $request->goal;
-
-        return [
-            'tasks' => [
-                [
-                    'title' => '目標達成に必要なアプローチ候補を3件書き出す',
-                    'description' => "目標「{$goal}」に対して、有効と思われる行動パターンを洗い出す。",
-                    'task_category' => 'planning',
-                    'priority' => 'high',
-                    'difficulty' => 'easy',
-                    'estimated_hours' => 1.0,
-                    'sequence_no' => 1,
-                    'ai_reason' => '最初に行動方針を明確化することで、後続タスクの精度が上がるため。',
-                ],
-                [
-                    'title' => '今週実行する具体的行動を5件に分解する',
-                    'description' => '期限と実行条件が明確な行動単位まで落とし込む。',
-                    'task_category' => 'execution',
-                    'priority' => 'high',
-                    'difficulty' => 'medium',
-                    'estimated_hours' => 2.0,
-                    'sequence_no' => 2,
-                    'ai_reason' => '抽象目標を実行可能タスクへ分解することで着手しやすくなるため。',
-                ],
-                [
-                    'title' => '進捗確認用の振り返りメモを作成する',
-                    'description' => '達成率、反応、課題を記録するテンプレートを用意する。',
-                    'task_category' => 'review',
-                    'priority' => 'medium',
-                    'difficulty' => 'easy',
-                    'estimated_hours' => 0.5,
-                    'sequence_no' => 3,
-                    'ai_reason' => '継続改善に必要な情報を残し、再生成時の精度向上にもつながるため。',
-                ],
-            ],
-        ];
+        AiExecutionLog::create([
+            'request_id' => $request->id,
+            'provider' => $meta['provider'] ?? 'openai',
+            'model' => $meta['model'] ?? config('services.openai.model'),
+            'prompt_version' => $meta['prompt_version'] ?? 'v1',
+            'execution_type' => $meta['execution_type'] ?? 'task_generation',
+            'retry_count' => $meta['retry_count'] ?? 0,
+            'request_payload' => $meta['request_payload'] ?? null,
+            'response_payload' => $meta['response_payload'] ?? null,
+            'raw_response' => $meta['raw_response'] ?? null,
+            'status' => $meta['status'] ?? 'completed',
+            'error_message' => $meta['error_message'] ?? null,
+            'latency_ms' => $meta['latency_ms'] ?? null,
+            'prompt_tokens' => $meta['prompt_tokens'] ?? null,
+            'completion_tokens' => $meta['completion_tokens'] ?? null,
+            'total_tokens' => $meta['total_tokens'] ?? null,
+            'estimated_cost_usd' => $meta['estimated_cost_usd'] ?? null,
+            'executed_at' => $meta['executed_at'] ?? now(),
+        ]);
     }
 }
