@@ -34,6 +34,7 @@ class TaskGenerationService
             $tasks = $result['tasks'] ?? [];
             $meta = $result['meta'] ?? [];
 
+            $tasks = $this->normalizeTasks($tasks);
             $this->validateTasks($tasks);
 
             DB::transaction(function () use ($request, $tasks, $meta) {
@@ -103,6 +104,29 @@ class TaskGenerationService
 
             throw $e;
         }
+    }
+
+    private function normalizeTasks(array $tasks): array
+    {
+        return array_map(function ($task, $index) {
+            if (!is_array($task)) {
+                $task = [];
+            }
+
+            if (!isset($task['estimated_hours']) || !is_numeric($task['estimated_hours'])) {
+                $task['estimated_hours'] = 1;
+            }
+
+            $task['estimated_hours'] = max(0.5, (float) $task['estimated_hours']);
+
+            if (!isset($task['sequence_no']) || !is_numeric($task['sequence_no'])) {
+                $task['sequence_no'] = $index + 1;
+            }
+
+            $task['sequence_no'] = (int) $task['sequence_no'];
+
+            return $task;
+        }, $tasks, array_keys($tasks));
     }
 
     private function validateTasks(array $tasks): void
