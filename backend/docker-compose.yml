@@ -40,6 +40,39 @@ services:
     networks:
       - uplink-ai-net
 
+  frontend:
+    build:
+      context: ../frontend
+    container_name: uplink-frontend
+    working_dir: /app
+
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+
+    command: >
+      sh -c "
+      if [ -f package.json ]; then
+        npm install &&
+        npm run dev -- --hostname 0.0.0.0;
+      else
+        tail -f /dev/null;
+      fi
+      "
+
+    depends_on:
+      - web
+
+    networks:
+      - uplink-ai-net
+
 volumes:
   postgres-data:
 
